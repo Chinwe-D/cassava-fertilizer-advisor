@@ -31,6 +31,13 @@ df, geo = load_data()
 all_state_names = sorted([f["properties"]["name"] for f in geo["features"]])
 covered_states = set(df["State"])
 
+# States outside the cassava-favourable belt sampled in this study (climate makes
+# cassava a minor crop there) -- shown, but with an honest explanation, not a number.
+OUTSIDE_BELT = {"Jigawa", "Kano", "Katsina", "Sokoto", "Yobe", "Zamfara"}
+# Lagos sits inside the belt but is too small for the 0.5-degree sampling grid to
+# have caught directly -- reasonable to borrow its immediate neighbour, Ogun.
+LAGOS_PROXY_STATE = "Ogun"
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -45,8 +52,28 @@ st.markdown(
 # Sidebar: state picker
 # ---------------------------------------------------------------------------
 st.sidebar.header("1. Choose your state")
-selectable_states = sorted(covered_states)
-state = st.sidebar.selectbox("State", selectable_states, index=selectable_states.index("Edo") if "Edo" in selectable_states else 0)
+selectable_states = all_state_names
+default_idx = selectable_states.index("Edo") if "Edo" in selectable_states else 0
+state = st.sidebar.selectbox("State", selectable_states, index=default_idx)
+
+if state in OUTSIDE_BELT:
+    st.warning(
+        f"**{state}** sits outside the cassava-growing belt this tool covers -- "
+        "cassava is not commonly grown at scale here because of the drier climate. "
+        "This tool does not have a reliable recommendation for this state. Please "
+        "pick a state further south for a real estimate."
+    )
+    st.stop()
+
+lookup_state = LAGOS_PROXY_STATE if state == "Lagos" else state
+row = df[df["State"] == lookup_state].iloc[0]
+
+if state == "Lagos":
+    st.info(
+        f"Lagos was too small for this tool's sampling grid to cover directly. "
+        f"The estimate below is borrowed from neighbouring **{LAGOS_PROXY_STATE}** "
+        "state, which has very similar soil and climate conditions."
+    )
 
 st.sidebar.markdown("---")
 st.sidebar.header("2. Your soil condition")
@@ -69,8 +96,6 @@ st.sidebar.caption(
     "for a soil test or an extension officer's on-site judgement. See "
     "'How trustworthy is this?' below for details."
 )
-
-row = df[df["State"] == state].iloc[0]
 
 # ---------------------------------------------------------------------------
 # Main panel: map + recommendation side by side
@@ -97,10 +122,13 @@ with col_map:
     )
     fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=420)
     st.plotly_chart(fig, width="stretch")
-    st.caption(f"{state} -- {int(row['n_points'])} sample point(s) used to build this estimate.")
+    if state == "Lagos":
+        st.caption(f"Estimate borrowed from {lookup_state} -- {int(row['n_points'])} sample point(s) used there.")
+    else:
+        st.caption(f"{state} -- {int(row['n_points'])} sample point(s) used to build this estimate.")
     if row["n_points"] <= 2:
         st.warning(
-            f"Only {int(row['n_points'])} sample point(s) cover {state}. "
+            f"Only {int(row['n_points'])} sample point(s) cover {lookup_state}. "
             "Treat this recommendation as a rough guide only, and a soil test "
             "is especially recommended here."
         )
@@ -108,12 +136,39 @@ with col_map:
 with col_rec:
     st.subheader("What your cassava likely needs")
 
+    # At-a-glance view: which nutrient matters most, before the detailed numbers.
+    glance_profile = profile if profile != "both" else "restricted"
+    nutrient_names = ["Nitrogen", "Phosphorus", "Potassium"]
+    nutrient_values = [
+        row[f"N_gap_{glance_profile}"],
+        row[f"P_gap_{glance_profile}"],
+        row[f"K_gap_{glance_profile}"],
+    ]
+    nutrient_colors = ["#2a78d6", "#eda100", "#1baf7a"]
+    order = sorted(range(3), key=lambda i: nutrient_values[i], reverse=True)
+
+    glance_fig = go.Figure(go.Bar(
+        x=[nutrient_values[i] for i in order],
+        y=[nutrient_names[i] for i in order],
+        orientation="h",
+        marker_color=[nutrient_colors[i] for i in order],
+        text=[f"{'Most needed' if j == 0 else ''}" for j in range(3)],
+        textposition="outside",
+    ))
+    glance_fig.update_layout(
+        height=170,
+        margin=dict(l=10, r=60, t=10, b=10),
+        xaxis_title="How much is needed (kg/ha)",
+        showlegend=False,
+    )
+    st.plotly_chart(glance_fig, width="stretch")
+
     def show_profile(p, label):
         st.markdown(f"**{label}**")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Urea (bags/ha)", f"{row[f'Urea_bags_ha_{p}']:.1f}")
-        c2.metric("TSP (bags/ha)", f"{row[f'TSP_bags_ha_{p}']:.1f}")
-        c3.metric("MOP (bags/ha)", f"{row[f'MOP_bags_ha_{p}']:.1f}")
+        c1.metric("Urea -- nitrogen (bags/ha)", f"{row[f'Urea_bags_ha_{p}']:.1f}")
+        c2.metric("TSP -- phosphorus (bags/ha)", f"{row[f'TSP_bags_ha_{p}']:.1f}")
+        c3.metric("MOP -- potassium (bags/ha)", f"{row[f'MOP_bags_ha_{p}']:.1f}")
 
     if profile == "both":
         st.info(
@@ -129,9 +184,9 @@ with col_rec:
         label = "Your soil (deep rooting)" if profile == "deep" else "Your soil (rooting blocked)"
         show_profile(profile, label)
 
-    k_gap = row[f"K_gap_{profile if profile != 'both' else 'restricted'}"]
-    n_gap = row[f"N_gap_{profile if profile != 'both' else 'restricted'}"]
-    p_gap = row[f"P_gap_{profile if profile != 'both' else 'restricted'}"]
+    k_gap = row[f"K_gap_{glance_profile}"]
+    n_gap = row[f"N_gap_{glance_profile}"]
+    p_gap = row[f"P_gap_{glance_profile}"]
 
     st.markdown("---")
     st.subheader("In plain words")
@@ -169,10 +224,10 @@ This tool was checked against **real cassava field trials** conducted in Nigeria
 real farms -- not just computer estimates.
 
 **What we found when we checked:** our first version was wrong. It
-under-estimated how well cassava grows without fertilizer, by 36-71%,
+badly underestimated how well cassava grows without fertilizer,
 because cassava's roots go far deeper than most crop models assume (over 3
 metres deep at one real farm we checked against). We fixed this, and the
-corrected version matched the real farm results to within 2.5-8.8%.
+corrected version now closely matches what actually grew on those real farms.
 
 **What we're still not sure about:** we cannot yet tell, from satellite data
 alone, whether a given piece of land has the kind of soil that lets cassava
