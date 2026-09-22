@@ -17,6 +17,12 @@ import streamlit as st
 
 st.set_page_config(page_title="Cassava Fertilizer Advisor -- Nigeria", layout="wide")
 
+# Plotly config used on every chart in this app: turns off the toolbar and
+# scroll-to-zoom, both of which otherwise fight with normal page scrolling
+# on a touchscreen -- the most common reason a chart-heavy page "feels stuck"
+# on a phone.
+PLOTLY_CONFIG = {"displayModeBar": False, "scrollZoom": False}
+
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
@@ -49,12 +55,15 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
-# Sidebar: state picker
+# Controls -- on the main page, not the sidebar. On a phone, Streamlit's
+# sidebar collapses behind a small arrow icon by default, and a first-time
+# visitor can easily miss it entirely, making the app look non-interactive.
+# Putting both controls in the main flow means there is nothing to discover.
 # ---------------------------------------------------------------------------
-st.sidebar.header("1. Choose your state")
+st.subheader("1. Choose your state")
 selectable_states = all_state_names
 default_idx = selectable_states.index("Edo") if "Edo" in selectable_states else 0
-state = st.sidebar.selectbox("State", selectable_states, index=default_idx)
+state = st.selectbox("State", selectable_states, index=default_idx, label_visibility="collapsed")
 
 if state in OUTSIDE_BELT:
     st.warning(
@@ -75,9 +84,8 @@ if state == "Lagos":
         "state, which has very similar soil and climate conditions."
     )
 
-st.sidebar.markdown("---")
-st.sidebar.header("2. Your soil condition")
-rooting_choice = st.sidebar.radio(
+st.subheader("2. Your soil condition")
+rooting_choice = st.radio(
     "Does your farmland allow roots to grow deep (more than 2 metres), "
     "or is there a hard or clayey layer that blocks deep roots?",
     ["I'm not sure", "Roots can go deep (sandy/loose soil, good drainage)", "Roots are blocked (hard/clayey layer, waterlogging)"],
@@ -90,12 +98,12 @@ elif rooting_choice.startswith("Roots are blocked"):
 else:
     profile = "both"
 
-st.sidebar.markdown("---")
-st.sidebar.caption(
+st.caption(
     "This tool is a prototype decision-support aid. It is not yet a substitute "
     "for a soil test or an extension officer's on-site judgement. See "
     "'How trustworthy is this?' below for details."
 )
+st.divider()
 
 # ---------------------------------------------------------------------------
 # Main panel: map + recommendation side by side
@@ -120,8 +128,8 @@ with col_map:
         visible=False, fitbounds="locations",
         projection_type="mercator",
     )
-    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=420)
-    st.plotly_chart(fig, width="stretch")
+    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=420, dragmode=False)
+    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
     if state == "Lagos":
         st.caption(f"Estimate borrowed from {lookup_state} -- {int(row['n_points'])} sample point(s) used there.")
     else:
@@ -161,7 +169,7 @@ with col_rec:
         xaxis_title="How much is needed (kg/ha)",
         showlegend=False,
     )
-    st.plotly_chart(glance_fig, width="stretch")
+    st.plotly_chart(glance_fig, width="stretch", config=PLOTLY_CONFIG)
 
     def show_profile(p, label):
         st.markdown(f"**{label}**")
